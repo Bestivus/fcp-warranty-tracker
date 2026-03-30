@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Package, RefreshCcw, DollarSign, Truck, Plus, Search, 
-  Car, ArrowRight, History, Trash2, Upload, Link as LinkIcon, Pencil
+  Car, ArrowRight, History, Trash2, Upload, Link as LinkIcon, Pencil,
+  ChevronDown, ChevronUp
 } from 'lucide-react';
 
 const StatusBadge = ({ status }) => {
@@ -22,34 +23,25 @@ const StatusBadge = ({ status }) => {
   };
 
   return (
-    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status] || styles['Active']}`}>
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${styles[status] || styles['Active']}`}>
       {labels[status] || status}
     </span>
   );
 };
 
-// --- API Helper & Environment Detection ---
-// Detects if the app is running in the sandbox/preview environment
+// --- API Helper ---
 const isPreviewEnv = typeof window !== 'undefined' && 
-  (window.location.protocol === 'blob:' || window.location.hostname.includes('usercontent'));
+  (window.location.protocol.includes('blob') || window.location.hostname.includes('usercontent'));
 
-// A wrapper for all API calls to simulate the database in the preview window, 
-// while cleanly falling back to the real Node.js backend when deployed in Docker.
 const apiCall = async (method, path, body = null) => {
-  // If running in the preview window, mock the backend using localStorage
   if (isPreviewEnv) {
-    await new Promise(r => setTimeout(r, 150)); // Simulate network latency
+    await new Promise(r => setTimeout(r, 150)); 
     let data = JSON.parse(localStorage.getItem('fcp_mock_db') || '[]');
     const id = path.split('/').pop();
 
-    if (method === 'GET') {
-      return data;
-    }
+    if (method === 'GET') return data;
     if (method === 'POST') {
-      const newRecord = { 
-        ...body, 
-        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) 
-      };
+      const newRecord = { ...body, id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) };
       data.push(newRecord);
       localStorage.setItem('fcp_mock_db', JSON.stringify(data));
       return newRecord;
@@ -66,13 +58,11 @@ const apiCall = async (method, path, body = null) => {
     }
   }
 
-  // If deployed in Docker, make the real API call to the Node.js backend
   const options = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) options.body = JSON.stringify(body);
   
   const res = await fetch(path, options);
   if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
-  
   const text = await res.text();
   return text ? JSON.parse(text) : {};
 };
@@ -103,6 +93,7 @@ export default function App() {
     description: '',
     vehicle: '',
     price: '',
+    quantity: 1, // NEW FIELD
     status: 'Active',
     rmaNumber: '',
     replacesOrderId: '',
@@ -131,9 +122,10 @@ export default function App() {
   // --- Derived Stats ---
   const stats = useMemo(() => {
     const pendingReturns = orders.filter(o => o.status === 'RMA Ready');
-    const pendingValue = pendingReturns.reduce((acc, curr) => acc + (parseFloat(curr.price) || 0), 0);
+    // Calculate value considering quantity
+    const pendingValue = pendingReturns.reduce((acc, curr) => acc + (parseFloat(curr.price) * (curr.quantity || 1) || 0), 0);
     const activeParts = orders.filter(o => o.status === 'Active');
-    const totalRefunded = orders.filter(o => o.status === 'Refunded').reduce((acc, curr) => acc + (parseFloat(curr.price) || 0), 0);
+    const totalRefunded = orders.filter(o => o.status === 'Refunded').reduce((acc, curr) => acc + (parseFloat(curr.price) * (curr.quantity || 1) || 0), 0);
     
     return {
       pendingReturnsCount: pendingReturns.length,
@@ -156,6 +148,7 @@ export default function App() {
       await apiCall('POST', API_URL, {
         ...formData,
         price: parseFloat(formData.price) || 0,
+        quantity: parseInt(formData.quantity) || 1,
         replacesOrderId: null,
         replacedByOrderId: null,
       });
@@ -176,30 +169,22 @@ export default function App() {
         const updates = {
             ...formData,
             price: parseFloat(formData.price) || 0,
+            quantity: parseInt(formData.quantity) || 1,
             replacesOrderId: formData.replacesOrderId || null,
             replacedByOrderId: formData.replacedByOrderId || null
         };
         
-        // 1. Update main doc
         await apiCall('PUT', `${API_URL}/${editId}`, updates);
 
-        // 2. Handle Linking Bi-directional updates
+        // Bi-directional updates
         if (originalOrder.replacesOrderId !== updates.replacesOrderId) {
-            if (originalOrder.replacesOrderId) {
-                await apiCall('PUT', `${API_URL}/${originalOrder.replacesOrderId}`, { replacedByOrderId: null });
-            }
-            if (updates.replacesOrderId) {
-                await apiCall('PUT', `${API_URL}/${updates.replacesOrderId}`, { replacedByOrderId: editId });
-            }
+            if (originalOrder.replacesOrderId) await apiCall('PUT', `${API_URL}/${originalOrder.replacesOrderId}`, { replacedByOrderId: null });
+            if (updates.replacesOrderId) await apiCall('PUT', `${API_URL}/${updates.replacesOrderId}`, { replacedByOrderId: editId });
         }
 
         if (originalOrder.replacedByOrderId !== updates.replacedByOrderId) {
-            if (originalOrder.replacedByOrderId) {
-                await apiCall('PUT', `${API_URL}/${originalOrder.replacedByOrderId}`, { replacesOrderId: null });
-            }
-            if (updates.replacedByOrderId) {
-                await apiCall('PUT', `${API_URL}/${updates.replacedByOrderId}`, { replacesOrderId: editId });
-            }
+            if (originalOrder.replacedByOrderId) await apiCall('PUT', `${API_URL}/${originalOrder.replacedByOrderId}`, { replacesOrderId: null });
+            if (updates.replacedByOrderId) await apiCall('PUT', `${API_URL}/${updates.replacedByOrderId}`, { replacesOrderId: editId });
         }
 
         setShowEditModal(false);
@@ -219,10 +204,7 @@ export default function App() {
 
     const rows = importText.trim().split(/\r?\n/);
     const orderNumToIdMap = {};
-    orders.forEach(o => {
-        if (o.orderNumber) orderNumToIdMap[o.orderNumber] = o.id;
-    });
-
+    orders.forEach(o => { if (o.orderNumber) orderNumToIdMap[o.orderNumber] = o.id; });
     const pendingLinks = [];
 
     try {
@@ -235,7 +217,6 @@ export default function App() {
             if (cols.length < 5) continue;
 
             let date = cols[0]?.trim() || new Date().toISOString().split('T')[0];
-            // Normalize slashes to hyphens for HTML date inputs
             date = date.replace(/\//g, '-');
             
             const sku = cols[1]?.trim() || '';
@@ -257,11 +238,10 @@ export default function App() {
             setImportStatus(`Importing ${i + 1}/${rows.length}: ${description}...`);
 
             const newDoc = await apiCall('POST', API_URL, { 
-              date, sku, description, vehicle, orderNumber, price, status 
+              date, sku, description, vehicle, orderNumber, price, quantity: 1, status 
             });
 
             orderNumToIdMap[orderNumber] = newDoc.id;
-
             if (replacedByStr || replacesStr || rmaForPrevStr) {
                 pendingLinks.push({ docId: newDoc.id, orderNumber, replacedByStr, replacesStr, rmaForPrevStr });
             }
@@ -277,16 +257,13 @@ export default function App() {
                 updatesToApply.replacedByOrderId = orderNumToIdMap[item.replacedByStr];
                 needsUpdate = true;
             }
-
             if (item.replacesStr && orderNumToIdMap[item.replacesStr]) {
                 updatesToApply.replacesOrderId = orderNumToIdMap[item.replacesStr];
                 needsUpdate = true;
             }
-
             if (needsUpdate) {
                 await apiCall('PUT', `${API_URL}/${item.docId}`, updatesToApply);
             }
-
             if (item.replacesStr && item.rmaForPrevStr && orderNumToIdMap[item.replacesStr]) {
                 const prevDocId = orderNumToIdMap[item.replacesStr];
                 await apiCall('PUT', `${API_URL}/${prevDocId}`, { rmaNumber: item.rmaForPrevStr });
@@ -314,20 +291,56 @@ export default function App() {
     if (!selectedPart) return;
 
     try {
+      const warrantyQty = parseInt(formData.warrantyQuantity) || 1;
+      const currentQty = selectedPart.quantity || 1;
+
+      // Ensure they don't warranty more than they have
+      if (warrantyQty > currentQty) {
+          alert("You cannot warranty more items than are in the order!");
+          return;
+      }
+
+      // Step 1: Create the Brand New Order Item
       const newOrder = await apiCall('POST', API_URL, {
-        ...formData,
+        date: formData.date,
+        orderNumber: formData.orderNumber,
         price: parseFloat(formData.price) || 0,
+        quantity: warrantyQty,
         sku: selectedPart.sku,
         description: selectedPart.description,
         vehicle: selectedPart.vehicle,
-        replacesOrderId: selectedPart.id,
         status: 'Active'
       });
 
-      await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
-        status: 'RMA Ready', 
-        replacedByOrderId: newOrder.id 
-      });
+      // Step 2: Handle the Old Item (Split logic if partial RMA)
+      if (warrantyQty < currentQty) {
+          // Reduce the quantity of the existing active item
+          await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
+              quantity: currentQty - warrantyQty 
+          });
+
+          // Create a new entry specifically for the returned portion
+          const splitRmaItem = await apiCall('POST', API_URL, {
+              ...selectedPart,
+              id: undefined, // Let DB generate new ID
+              quantity: warrantyQty,
+              status: 'RMA Ready',
+              replacedByOrderId: newOrder.id
+          });
+
+          // Link new active item backward to this split RMA item
+          await apiCall('PUT', `${API_URL}/${newOrder.id}`, { replacesOrderId: splitRmaItem.id });
+
+      } else {
+          // Full RMA - Just update the existing item
+          await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
+            status: 'RMA Ready', 
+            replacedByOrderId: newOrder.id 
+          });
+          
+          // Link new active item backward to original item
+          await apiCall('PUT', `${API_URL}/${newOrder.id}`, { replacesOrderId: selectedPart.id });
+      }
 
       setShowWarrantyModal(false);
       setSelectedPart(null);
@@ -363,31 +376,32 @@ export default function App() {
       description: '',
       vehicle: '',
       price: '',
+      quantity: 1,
       status: 'Active',
       rmaNumber: '',
       replacesOrderId: '',
-      replacedByOrderId: ''
+      replacedByOrderId: '',
+      warrantyQuantity: 1 // Only used in warranty modal
     });
   };
 
-  const openWarrantyModal = (order) => {
-    setSelectedPart(order);
+  const openWarrantyModal = (part) => {
+    setSelectedPart(part);
     setFormData({
         ...formData,
         date: new Date().toISOString().split('T')[0],
         orderNumber: '',
         price: '',
-        sku: order.sku,
-        description: order.description,
-        vehicle: order.vehicle
+        sku: part.sku,
+        description: part.description,
+        vehicle: part.vehicle,
+        warrantyQuantity: part.quantity || 1 // Default to max
     });
     setShowWarrantyModal(true);
   };
 
   const openEditModal = (order) => {
     setEditId(order.id);
-    
-    // Ensure the date strictly uses hyphens so the HTML date picker doesn't panic
     let safeDate = order.date || new Date().toISOString().split('T')[0];
     safeDate = safeDate.replace(/\//g, '-');
 
@@ -398,6 +412,7 @@ export default function App() {
         description: order.description,
         vehicle: order.vehicle,
         price: order.price,
+        quantity: order.quantity || 1,
         status: order.status,
         rmaNumber: order.rmaNumber || '',
         replacesOrderId: order.replacesOrderId || '',
@@ -406,17 +421,39 @@ export default function App() {
     setShowEditModal(true);
   };
 
-  const filteredOrders = orders.filter(order => {
-    const matchesSearch = 
-      order.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.orderNumber?.toString().includes(searchTerm) ||
-      order.vehicle?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    if (view === 'inventory') return matchesSearch && order.status === 'Active';
-    if (view === 'returns') return matchesSearch && ['RMA Ready', 'RMA Sent'].includes(order.status);
-    return matchesSearch;
-  });
+  // --- Grouping Logic ---
+  const filteredAndGroupedOrders = useMemo(() => {
+    // 1. Filter first
+    const filtered = orders.filter(order => {
+      const matchesSearch = 
+        order.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.orderNumber?.toString().includes(searchTerm) ||
+        order.vehicle?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      if (view === 'inventory') return matchesSearch && order.status === 'Active';
+      if (view === 'returns') return matchesSearch && ['RMA Ready', 'RMA Sent'].includes(order.status);
+      return matchesSearch;
+    });
+
+    // 2. Group by Order Number
+    const groups = {};
+    filtered.forEach(item => {
+        const key = item.orderNumber || 'Unknown Order';
+        if (!groups[key]) {
+            groups[key] = {
+                orderNumber: key,
+                date: item.date, // Take date of first item
+                vehicle: item.vehicle,
+                items: []
+            };
+        }
+        groups[key].items.push(item);
+    });
+
+    // Sort groups by date descending
+    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [orders, searchTerm, view]);
 
   if (loading) return <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-400">Loading your garage...</div>;
 
@@ -453,7 +490,7 @@ export default function App() {
               onClick={() => setView('dashboard')}
               className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-medium transition-all ${view === 'dashboard' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
-              All Orders
+              All Parts
             </button>
             <button 
               onClick={() => setView('inventory')}
@@ -492,105 +529,128 @@ export default function App() {
               onClick={() => { resetForm(); setShowAddModal(true); }}
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
             >
-              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add Order</span>
+              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add Part</span>
             </button>
           </div>
         </div>
 
-        {/* Main List */}
-        <div className="grid gap-4">
-          {filteredOrders.length === 0 ? (
+        {/* Main List - Grouped by Order */}
+        <div className="space-y-6">
+          {filteredAndGroupedOrders.length === 0 ? (
             <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
               <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <h3 className="text-lg font-medium text-slate-600">No orders found</h3>
+              <h3 className="text-lg font-medium text-slate-600">No parts found</h3>
               <p className="text-slate-400 text-sm">Import your Google Sheet or add a purchase.</p>
-              <div className="mt-4">
-                 <button onClick={() => setShowImportModal(true)} className="text-blue-600 text-sm font-medium hover:underline">Import from Sheets</button>
-              </div>
             </div>
           ) : (
-            filteredOrders.map(order => (
-              <div key={order.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden group">
-                <div className="flex flex-wrap items-center justify-between p-4 bg-slate-50/50 border-b border-slate-100 gap-2">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-xs text-slate-400">{order.date}</span>
-                    <div className="flex items-center gap-1.5 text-slate-600 font-medium text-sm">
-                        <Car className="w-4 h-4 text-slate-400" />
-                        {order.vehicle || 'Unknown Vehicle'}
-                    </div>
+            filteredAndGroupedOrders.map(group => (
+              <div key={group.orderNumber} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                
+                {/* Order Header */}
+                <div className="bg-slate-100/50 border-b border-slate-200 p-4 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                     <div>
+                        <span className="text-xs font-bold uppercase text-slate-400 tracking-wider">Order</span>
+                        <h2 className="text-lg font-bold text-slate-800 font-mono">#{group.orderNumber}</h2>
+                     </div>
+                     <div className="h-8 w-px bg-slate-300 hidden sm:block"></div>
+                     <div className="text-sm text-slate-500 flex flex-col">
+                        <span>{group.date}</span>
+                        <div className="flex items-center gap-1"><Car className="w-3 h-3"/> {group.vehicle || 'Mixed Vehicles'}</div>
+                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                     <span className="text-xs text-slate-400 font-mono">#{order.orderNumber}</span>
-                     {order.rmaNumber && (
-                        <span className="text-[10px] bg-slate-100 text-slate-500 border border-slate-200 px-1.5 rounded" title="RMA Number">RMA: {order.rmaNumber}</span>
-                     )}
-                     <StatusBadge status={order.status} />
+                  <div className="text-right">
+                    <span className="text-xs font-bold uppercase text-slate-400 tracking-wider">Order Total</span>
+                    <div className="text-lg font-bold text-slate-800">
+                        ${group.items.reduce((sum, item) => sum + (parseFloat(item.price) * (item.quantity || 1)), 0).toFixed(2)}
+                    </div>
                   </div>
                 </div>
 
-                <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-slate-800 text-lg flex items-center gap-2">
-                      {order.description}
-                    </h3>
-                    <div className="flex items-center gap-4 mt-1 text-sm text-slate-500">
-                      <span className="font-mono bg-slate-100 px-1.5 rounded text-xs text-slate-600">SKU: {order.sku}</span>
-                      <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{order.price?.toFixed(2)}</span>
-                    </div>
+                {/* Items in this Order */}
+                <div className="divide-y divide-slate-100">
+                  {group.items.map(part => (
+                    <div key={part.id} className="p-4 hover:bg-slate-50 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      
+                      {/* Part Details */}
+                      <div className="flex-1">
+                        <div className="flex items-start gap-3">
+                           <div className="bg-slate-200 text-slate-600 font-bold text-xs px-2 py-1 rounded-md mt-0.5">
+                              {part.quantity || 1}x
+                           </div>
+                           <div>
+                              <h3 className="font-semibold text-slate-800 text-base">{part.description}</h3>
+                              <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-slate-500">
+                                <span className="font-mono bg-white border border-slate-200 px-1.5 rounded text-xs">SKU: {part.sku}</span>
+                                <span className="flex items-center"><DollarSign className="w-3 h-3 text-slate-400" />{parseFloat(part.price).toFixed(2)} ea</span>
+                                <StatusBadge status={part.status} />
+                              </div>
+                           </div>
+                        </div>
 
-                    {(order.replacesOrderId || order.replacedByOrderId) && (
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                         {order.replacesOrderId && (
-                            <div className="flex items-center gap-1 text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-100">
-                                <History className="w-3 h-3" /> Replaces previous order
-                            </div>
-                         )}
-                         {order.replacedByOrderId && (
-                            <div className="flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                                <ArrowRight className="w-3 h-3" /> Replaced by newer order
-                            </div>
-                         )}
+                        {/* Linking & RMA logic */}
+                        {(part.replacesOrderId || part.replacedByOrderId || part.rmaNumber) && (
+                          <div className="mt-3 ml-11 flex flex-wrap gap-2 text-xs">
+                            {part.replacesOrderId && (
+                                <div className="flex items-center gap-1 text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                                    <History className="w-3 h-3" /> Replaces an older part
+                                </div>
+                            )}
+                            {part.replacedByOrderId && (
+                                <div className="flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                                    <ArrowRight className="w-3 h-3" /> Replaced by newer part
+                                </div>
+                            )}
+                            {part.rmaNumber && (
+                                <span className="bg-slate-800 text-white px-2 py-1 rounded border border-slate-900 font-mono">
+                                    RMA: {part.rmaNumber}
+                                </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Editable RMA Box if needed */}
+                        {['RMA Ready', 'RMA Sent'].includes(part.status) && (
+                          <div className="mt-3 ml-11 flex items-center gap-2">
+                            <input 
+                                type="text" 
+                                placeholder="Enter RMA #" 
+                                value={part.rmaNumber || ''}
+                                onChange={(e) => handleUpdateRMA(part.id, e.target.value)}
+                                className="text-xs border border-amber-300 bg-amber-50 rounded px-2 py-1.5 w-40 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 shadow-sm"
+                            />
+                          </div>
+                        )}
                       </div>
-                    )}
 
-                    {['RMA Ready', 'RMA Sent'].includes(order.status) && (
-                      <div className="mt-3 flex items-center gap-2">
-                        <input 
-                            type="text" 
-                            placeholder="Enter RMA #" 
-                            value={order.rmaNumber || ''}
-                            onChange={(e) => handleUpdateRMA(order.id, e.target.value)}
-                            className="text-xs border border-amber-200 bg-amber-50 rounded px-2 py-1 w-32 focus:outline-none focus:border-amber-400"
-                        />
+                      {/* Action Buttons */}
+                      <div className="flex items-center gap-2 mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 w-full md:w-auto">
+                        {part.status === 'Active' && (
+                            <button onClick={() => openWarrantyModal(part)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                <RefreshCcw className="w-4 h-4" /> Warranty
+                            </button>
+                        )}
+                        {part.status === 'RMA Ready' && (
+                            <button onClick={() => handleUpdateStatus(part.id, 'RMA Sent')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-800 hover:bg-amber-200 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                <Truck className="w-4 h-4" /> Shipped
+                            </button>
+                        )}
+                        {part.status === 'RMA Sent' && (
+                            <button onClick={() => handleUpdateStatus(part.id, 'Refunded')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-green-100 text-green-800 hover:bg-green-200 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                <DollarSign className="w-4 h-4" /> Refunded
+                            </button>
+                        )}
+                        <div className="flex items-center border-l border-slate-200 pl-2 gap-1 ml-auto md:ml-0">
+                            <button onClick={() => openEditModal(part)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Edit Part">
+                                <Pencil className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => handleDelete(part.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete Part">
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
                       </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 mt-2 md:mt-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100">
-                    {order.status === 'Active' && (
-                        <button onClick={() => openWarrantyModal(order)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors">
-                            <RefreshCcw className="w-4 h-4" /> Warranty It
-                        </button>
-                    )}
-                    {order.status === 'RMA Ready' && (
-                        <button onClick={() => handleUpdateStatus(order.id, 'RMA Sent')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-800 hover:bg-amber-200 rounded-lg text-sm font-medium transition-colors">
-                            <Truck className="w-4 h-4" /> Mark Shipped
-                        </button>
-                    )}
-                    {order.status === 'RMA Sent' && (
-                        <button onClick={() => handleUpdateStatus(order.id, 'Refunded')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-green-100 text-green-800 hover:bg-green-200 rounded-lg text-sm font-medium transition-colors">
-                            <DollarSign className="w-4 h-4" /> Mark Refunded
-                        </button>
-                    )}
-                    <div className="flex items-center border-l border-slate-100 pl-2 gap-1">
-                        <button onClick={() => openEditModal(order)} className="p-2 text-slate-300 hover:text-blue-500 transition-colors" title="Edit Order">
-                            <Pencil className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleDelete(order.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors" title="Delete Order">
-                            <Trash2 className="w-4 h-4" />
-                        </button>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             ))
@@ -623,6 +683,7 @@ export default function App() {
                   <li>Copy (Ctrl+C) the cells.</li>
                   <li>Paste them into the box below.</li>
                 </ol>
+                <p className="mt-2 text-xs opacity-80">Note: All imported items will default to Quantity 1. You can edit them later if needed.</p>
               </div>
 
               <textarea 
@@ -655,7 +716,7 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="font-semibold text-slate-800">New Purchase</h3>
+              <h3 className="font-semibold text-slate-800">Add Line Item</h3>
               <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <form onSubmit={handleAddSubmit} className="p-6 space-y-4">
@@ -673,13 +734,17 @@ export default function App() {
                 <label className="block text-xs font-medium text-slate-500 mb-1">Vehicle</label>
                 <input required type="text" name="vehicle" value={formData.vehicle} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" placeholder="e.g. E46 M3" />
               </div>
+              <div>
+                 <label className="block text-xs font-medium text-slate-500 mb-1">Part Name</label>
+                 <input required type="text" name="description" value={formData.description} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" placeholder="e.g. Control Arm Kit" />
+              </div>
               <div className="grid grid-cols-3 gap-4">
-                 <div className="col-span-2">
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Part Name</label>
-                    <input required type="text" name="description" value={formData.description} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" placeholder="e.g. Control Arm Kit" />
-                 </div>
                  <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Price ($)</label>
+                    <label className="block text-xs font-bold text-blue-600 mb-1">Quantity</label>
+                    <input required type="number" min="1" name="quantity" value={formData.quantity} onChange={handleInputChange} className="w-full p-2 border border-blue-300 bg-blue-50 rounded-lg text-sm font-bold" />
+                 </div>
+                 <div className="col-span-2">
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Price per item ($)</label>
                     <input required type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" placeholder="0.00" />
                  </div>
               </div>
@@ -688,19 +753,19 @@ export default function App() {
                 <input type="text" name="sku" value={formData.sku} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" placeholder="Optional SKU" />
               </div>
               <button type="submit" className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-sm mt-2">
-                Save Purchase
+                Save Item
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* EDIT MODAL with Manual Linking */}
+      {/* EDIT MODAL */}
       {showEditModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="font-semibold text-slate-800">Edit Order</h3>
+              <h3 className="font-semibold text-slate-800">Edit Part</h3>
               <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <div className="overflow-y-auto p-6">
@@ -719,23 +784,23 @@ export default function App() {
                     <label className="block text-xs font-medium text-slate-500 mb-1">Vehicle</label>
                     <input required type="text" name="vehicle" value={formData.vehicle} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
                 </div>
+                <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Part Name</label>
+                    <input required type="text" name="description" value={formData.description} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
+                </div>
                 <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2">
-                        <label className="block text-xs font-medium text-slate-500 mb-1">Part Name</label>
-                        <input required type="text" name="description" value={formData.description} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
-                    </div>
                     <div>
-                        <label className="block text-xs font-medium text-slate-500 mb-1">Price ($)</label>
+                        <label className="block text-xs font-bold text-blue-600 mb-1">Quantity</label>
+                        <input required type="number" min="1" name="quantity" value={formData.quantity} onChange={handleInputChange} className="w-full p-2 border border-blue-300 bg-blue-50 rounded-lg text-sm font-bold" />
+                    </div>
+                    <div className="col-span-2">
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Price per item ($)</label>
                         <input required type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
                     </div>
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">SKU</label>
                     <input type="text" name="sku" value={formData.sku} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" />
-                </div>
-                <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">RMA # (if applicable)</label>
-                    <input type="text" name="rmaNumber" value={formData.rmaNumber} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" placeholder="Optional" />
                 </div>
 
                 <div className="border-t border-slate-100 pt-4 mt-4">
@@ -745,7 +810,7 @@ export default function App() {
                     
                     <div className="space-y-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
                         <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">This Replaces (Previous Order):</label>
+                            <label className="block text-xs font-medium text-slate-500 mb-1">This Replaces (Previous Part):</label>
                             <select name="replacesOrderId" value={formData.replacesOrderId || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white">
                                 <option value="">-- None --</option>
                                 {orders.filter(o => o.id !== editId && new Date(o.date) <= new Date(formData.date)).map(o => (
@@ -754,7 +819,7 @@ export default function App() {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">This Is Replaced By (Newer Order):</label>
+                            <label className="block text-xs font-medium text-slate-500 mb-1">This Is Replaced By (Newer Part):</label>
                             <select name="replacedByOrderId" value={formData.replacedByOrderId || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white">
                                 <option value="">-- None --</option>
                                 {orders.filter(o => o.id !== editId && new Date(o.date) >= new Date(formData.date)).map(o => (
@@ -773,7 +838,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Warranty Replace Modal */}
+      {/* Warranty Replace Modal - WITH PARTIAL SPLIT LOGIC */}
       {showWarrantyModal && selectedPart && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border-2 border-blue-100">
@@ -788,15 +853,38 @@ export default function App() {
             <div className="p-6 space-y-4">
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm">
                 <p className="text-slate-500 mb-1">You are replacing:</p>
-                <p className="font-medium text-slate-800">{selectedPart.description}</p>
+                <div className="flex justify-between items-center">
+                   <p className="font-medium text-slate-800">{selectedPart.description}</p>
+                   <span className="bg-slate-200 px-2 py-0.5 rounded text-xs font-bold text-slate-600">Available: {selectedPart.quantity || 1}</span>
+                </div>
                 <p className="text-xs text-slate-400 font-mono mt-1">Orig Order: #{selectedPart.orderNumber}</p>
               </div>
 
               <div className="text-sm text-slate-600">
-                 Enter the details of the <strong>NEW</strong> order you just placed. The old order will automatically be marked "Ready to Return".
+                 Enter the details of the <strong>NEW</strong> order you just placed. 
               </div>
 
               <form onSubmit={handleWarrantySubmit} className="space-y-4 pt-2">
+                 
+                 <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-xl mb-4">
+                    <label className="block text-sm font-bold text-blue-800 mb-2">How many are you returning?</label>
+                    <input 
+                        required 
+                        type="number" 
+                        min="1" 
+                        max={selectedPart.quantity || 1} 
+                        name="warrantyQuantity" 
+                        value={formData.warrantyQuantity} 
+                        onChange={handleInputChange} 
+                        className="w-full p-2 border-2 border-blue-300 bg-white rounded-lg text-lg font-bold text-center text-blue-700" 
+                    />
+                    {(formData.warrantyQuantity < (selectedPart.quantity || 1)) && (
+                        <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                            <ArrowRight className="w-3 h-3"/> The original row will automatically split into two so you keep track of the remaining active parts!
+                        </p>
+                    )}
+                 </div>
+
                  <div className="grid grid-cols-2 gap-4">
                      <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">New Order Date</label>
@@ -808,7 +896,7 @@ export default function App() {
                      </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">New Price ($)</label>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">New Price per item ($)</label>
                     <input required type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" placeholder="Price paid" />
                  </div>
                  <button type="submit" className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-sm">

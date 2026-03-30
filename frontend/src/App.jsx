@@ -211,7 +211,10 @@ export default function App() {
             if (cols.length === 1 && row.includes(',')) cols = row.split(',');
             if (cols.length < 5) continue;
 
-            const date = cols[0]?.trim() || new Date().toISOString().split('T')[0];
+            let date = cols[0]?.trim() || new Date().toISOString().split('T')[0];
+            // Normalize slashes to hyphens for HTML date inputs
+            date = date.replace(/\//g, '-');
+            
             const sku = cols[1]?.trim() || '';
             const description = cols[2]?.trim() || 'Imported Part';
             const vehicle = cols[3]?.trim() || '';
@@ -385,8 +388,13 @@ export default function App() {
 
   const openEditModal = (order) => {
     setEditId(order.id);
+    
+    // Ensure the date strictly uses hyphens so the HTML date picker doesn't panic
+    let safeDate = order.date || new Date().toISOString().split('T')[0];
+    safeDate = safeDate.replace(/\//g, '-');
+
     setFormData({
-        date: order.date,
+        date: safeDate,
         orderNumber: order.orderNumber,
         sku: order.sku,
         description: order.description,

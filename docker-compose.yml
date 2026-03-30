@@ -1,27 +1,33 @@
-version: '3.8'
-
 services:
   fcp-tracker:
-    build: .
-    container_name: fcp-tracker
-    restart: unless-stopped
+    image: ghcr.io/your-github-username/fcp-warranty-tracker:latest
+    expose:
+      - 3000
     volumes:
-      # This is CRITICAL. It maps the internal SQLite database file 
-      # to a folder on your actual server so you don't lose your 
-      # parts list if the container restarts.
-      - ./app-data:/app/data
+      - type: volume
+        source: config
+        target: /app/data
     networks:
-      - proxy # Assuming your Traefik network is named 'proxy'
-    labels:
-      - "traefik.enable=true"
-      # Change 'fcp.local' to whatever local domain/IP scheme you use for Traefik
-      - "traefik.http.routers.fcptracker.rule=Host(`fcp.local`)"
-      - "traefik.http.routers.fcptracker.entrypoints=web"
-      # If you use HTTPS/TLS on your local Traefik, uncomment below:
-      # - "traefik.http.routers.fcptracker.tls=true"
-      # - "traefik.http.routers.fcptracker.entrypoints=websecure"
-      - "traefik.http.services.fcptracker.loadbalancer.server.port=3000"
+      - proxy_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true" 
+        - "traefik.http.routers.fcp-tracker.entrypoints=websecure"
+        - "traefik.http.routers.fcp-tracker.rule=Host(`tracker.yourdomain.com`)" 
+        - "traefik.http.routers.fcp-tracker.tls=true"
+        - "traefik.http.services.fcp-tracker.loadbalancer.server.port=3000"
+
+volumes:
+  config:
+    driver_opts:
+      type: "nfs"
+      o: "addr=192.168.X.X,nolock,soft,nfsvers=4"
+      device: ":/mnt/your/nfs/path"
 
 networks:
-  proxy:
+  proxy_network:
     external: true

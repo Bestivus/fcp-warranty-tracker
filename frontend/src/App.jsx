@@ -28,6 +28,55 @@ const StatusBadge = ({ status }) => {
   );
 };
 
+// --- API Helper & Environment Detection ---
+// Detects if the app is running in the sandbox/preview environment
+const isPreviewEnv = typeof window !== 'undefined' && 
+  (window.location.protocol === 'blob:' || window.location.hostname.includes('usercontent'));
+
+// A wrapper for all API calls to simulate the database in the preview window, 
+// while cleanly falling back to the real Node.js backend when deployed in Docker.
+const apiCall = async (method, path, body = null) => {
+  // If running in the preview window, mock the backend using localStorage
+  if (isPreviewEnv) {
+    await new Promise(r => setTimeout(r, 150)); // Simulate network latency
+    let data = JSON.parse(localStorage.getItem('fcp_mock_db') || '[]');
+    const id = path.split('/').pop();
+
+    if (method === 'GET') {
+      return data;
+    }
+    if (method === 'POST') {
+      const newRecord = { 
+        ...body, 
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) 
+      };
+      data.push(newRecord);
+      localStorage.setItem('fcp_mock_db', JSON.stringify(data));
+      return newRecord;
+    }
+    if (method === 'PUT') {
+      data = data.map(item => item.id === id ? { ...item, ...body } : item);
+      localStorage.setItem('fcp_mock_db', JSON.stringify(data));
+      return { success: true };
+    }
+    if (method === 'DELETE') {
+      data = data.filter(item => item.id !== id);
+      localStorage.setItem('fcp_mock_db', JSON.stringify(data));
+      return { success: true };
+    }
+  }
+
+  // If deployed in Docker, make the real API call to the Node.js backend
+  const options = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) options.body = JSON.stringify(body);
+  
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
+  
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+};
+
 export default function App() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -62,13 +111,11 @@ export default function App() {
   
   const [selectedPart, setSelectedPart] = useState(null);
 
-  // --- API Handlers ---
   const API_URL = '/api/orders';
 
   const fetchOrders = async () => {
     try {
-      const res = await fetch(API_URL);
-      const data = await res.json();
+      const data = await apiCall('GET', API_URL);
       setOrders(data);
     } catch (err) {
       console.error("Failed to fetch orders:", err);
@@ -106,15 +153,11 @@ export default function App() {
   const handleAddSubmit = async (e) => {
     e.preventDefault();
     try {
-      await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          price: parseFloat(formData.price) || 0,
-          replacesOrderId: null,
-          replacedByOrderId: null,
-        })
+      await apiCall('POST', API_URL, {
+        ...formData,
+        price: parseFloat(formData.price) || 0,
+        replacesOrderId: null,
+        replacedByOrderId: null,
       });
       setShowAddModal(false);
       resetForm();
@@ -138,44 +181,24 @@ export default function App() {
         };
         
         // 1. Update main doc
-        await fetch(`${API_URL}/${editId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updates)
-        });
+        await apiCall('PUT', `${API_URL}/${editId}`, updates);
 
         // 2. Handle Linking Bi-directional updates
         if (originalOrder.replacesOrderId !== updates.replacesOrderId) {
             if (originalOrder.replacesOrderId) {
-                await fetch(`${API_URL}/${originalOrder.replacesOrderId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ replacedByOrderId: null })
-                });
+                await apiCall('PUT', `${API_URL}/${originalOrder.replacesOrderId}`, { replacedByOrderId: null });
             }
             if (updates.replacesOrderId) {
-                await fetch(`${API_URL}/${updates.replacesOrderId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ replacedByOrderId: editId })
-                });
+                await apiCall('PUT', `${API_URL}/${updates.replacesOrderId}`, { replacedByOrderId: editId });
             }
         }
 
         if (originalOrder.replacedByOrderId !== updates.replacedByOrderId) {
             if (originalOrder.replacedByOrderId) {
-                await fetch(`${API_URL}/${originalOrder.replacedByOrderId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ replacesOrderId: null })
-                });
+                await apiCall('PUT', `${API_URL}/${originalOrder.replacedByOrderId}`, { replacesOrderId: null });
             }
             if (updates.replacedByOrderId) {
-                await fetch(`${API_URL}/${updates.replacedByOrderId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ replacesOrderId: editId })
-                });
+                await apiCall('PUT', `${API_URL}/${updates.replacedByOrderId}`, { replacesOrderId: editId });
             }
         }
 
@@ -233,12 +256,9 @@ export default function App() {
 
             setImportStatus(`Importing ${i + 1}/${rows.length}: ${description}...`);
 
-            const res = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ date, sku, description, vehicle, orderNumber, price, status })
+            const newDoc = await apiCall('POST', API_URL, { 
+              date, sku, description, vehicle, orderNumber, price, status 
             });
-            const newDoc = await res.json();
 
             orderNumToIdMap[orderNumber] = newDoc.id;
 
@@ -264,20 +284,12 @@ export default function App() {
             }
 
             if (needsUpdate) {
-                await fetch(`${API_URL}/${item.docId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updatesToApply)
-                });
+                await apiCall('PUT', `${API_URL}/${item.docId}`, updatesToApply);
             }
 
             if (item.replacesStr && item.rmaForPrevStr && orderNumToIdMap[item.replacesStr]) {
                 const prevDocId = orderNumToIdMap[item.replacesStr];
-                await fetch(`${API_URL}/${prevDocId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rmaNumber: item.rmaForPrevStr })
-                });
+                await apiCall('PUT', `${API_URL}/${prevDocId}`, { rmaNumber: item.rmaForPrevStr });
             }
         }
 
@@ -302,25 +314,19 @@ export default function App() {
     if (!selectedPart) return;
 
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          price: parseFloat(formData.price) || 0,
-          sku: selectedPart.sku,
-          description: selectedPart.description,
-          vehicle: selectedPart.vehicle,
-          replacesOrderId: selectedPart.id,
-          status: 'Active'
-        })
+      const newOrder = await apiCall('POST', API_URL, {
+        ...formData,
+        price: parseFloat(formData.price) || 0,
+        sku: selectedPart.sku,
+        description: selectedPart.description,
+        vehicle: selectedPart.vehicle,
+        replacesOrderId: selectedPart.id,
+        status: 'Active'
       });
-      const newOrder = await res.json();
 
-      await fetch(`${API_URL}/${selectedPart.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'RMA Ready', replacedByOrderId: newOrder.id })
+      await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
+        status: 'RMA Ready', 
+        replacedByOrderId: newOrder.id 
       });
 
       setShowWarrantyModal(false);
@@ -333,26 +339,18 @@ export default function App() {
   };
 
   const handleUpdateStatus = async (orderId, newStatus) => {
-    await fetch(`${API_URL}/${orderId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
-    });
+    await apiCall('PUT', `${API_URL}/${orderId}`, { status: newStatus });
     fetchOrders();
   };
 
   const handleUpdateRMA = async (orderId, rmaNumber) => {
-    await fetch(`${API_URL}/${orderId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rmaNumber })
-    });
+    await apiCall('PUT', `${API_URL}/${orderId}`, { rmaNumber });
     fetchOrders();
   };
 
   const handleDelete = async (id) => {
     if(confirm("Are you sure? This cannot be undone.")) {
-        await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+        await apiCall('DELETE', `${API_URL}/${id}`);
         fetchOrders();
     }
   }

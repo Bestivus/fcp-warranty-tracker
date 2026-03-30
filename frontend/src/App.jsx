@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Package, RefreshCcw, DollarSign, Truck, Plus, Search, 
-  Car, ArrowRight, History, Trash2, Upload, Link as LinkIcon, Pencil
+  Car, ArrowRight, History, Trash2, Upload, Link as LinkIcon, Pencil, XCircle
 } from 'lucide-react';
 
 const StatusBadge = ({ status }) => {
@@ -11,6 +11,7 @@ const StatusBadge = ({ status }) => {
     'RMA Sent': 'bg-blue-100 text-blue-800 border-blue-200',
     'Refunded': 'bg-gray-100 text-gray-600 border-gray-200 decoration-slice',
     'Spare': 'bg-purple-100 text-purple-800 border-purple-200',
+    'Discarded': 'bg-red-50 text-red-700 border-red-200',
   };
 
   const labels = {
@@ -19,6 +20,7 @@ const StatusBadge = ({ status }) => {
     'RMA Sent': 'Return Shipped',
     'Refunded': 'Completed/Refunded',
     'Spare': 'Spare Part',
+    'Discarded': 'Lost/Discarded',
   };
 
   return (
@@ -200,7 +202,7 @@ export default function App() {
     setImportStatus('Parsing rows...');
 
     const rows = importText.trim().split(/\r?\n/);
-    const importedDocs = []; // Array to hold new docs temporarily
+    const importedDocs = []; 
 
     try {
         // PASS 1: Create all new records
@@ -237,7 +239,6 @@ export default function App() {
               date, sku, description, vehicle, orderNumber, price, quantity: 1, status 
             });
 
-            // Save the newly created DB item along with its spreadsheet link targets
             importedDocs.push({
                 part: newDoc,
                 replacedByStr,
@@ -246,23 +247,20 @@ export default function App() {
             });
         }
 
-        // Combine existing database parts with the newly imported parts to search across everything
         const allParts = [...orders, ...importedDocs.map(d => d.part)];
 
-        // Helper function: Finds the exact line item out of a multi-part order
         const findTargetPart = (targetOrderNum, currentPart) => {
              const candidates = allParts.filter(p => String(p.orderNumber).trim() === String(targetOrderNum).trim());
              if (candidates.length === 0) return null;
-             if (candidates.length === 1) return candidates[0]; // Only 1 part in order, easy match
+             if (candidates.length === 1) return candidates[0]; 
              
-             // If multiple parts share the order number, match by SKU or Description
              const exactMatch = candidates.find(p => p.sku && p.sku === currentPart.sku);
              if (exactMatch) return exactMatch;
              
              const descMatch = candidates.find(p => p.description && p.description === currentPart.description);
              if (descMatch) return descMatch;
              
-             return candidates[0]; // Fallback
+             return candidates[0]; 
         };
 
         setImportStatus(`Linking relationships...`);
@@ -273,34 +271,28 @@ export default function App() {
             const updatesToApply = {};
             let needsUpdate = false;
 
-            // 1. If this part is eventually replaced by a newer one
             if (item.replacedByStr) {
                 const target = findTargetPart(item.replacedByStr, currentPart);
                 if (target) {
                     updatesToApply.replacedByOrderId = target.id;
                     needsUpdate = true;
-                    // BI-DIRECTIONAL FIX: Tell the newer part it replaces this one
                     await apiCall('PUT', `${API_URL}/${target.id}`, { replacesOrderId: currentPart.id });
                 }
             }
             
-            // 2. If this part replaces an older one
             if (item.replacesStr) {
                 const target = findTargetPart(item.replacesStr, currentPart);
                 if (target) {
                     updatesToApply.replacesOrderId = target.id;
                     needsUpdate = true;
-                    // BI-DIRECTIONAL FIX: Tell the older part it was replaced by this one
                     await apiCall('PUT', `${API_URL}/${target.id}`, { replacedByOrderId: currentPart.id });
                     
-                    // Handle carry-over RMA
                     if (item.rmaForPrevStr) {
                         await apiCall('PUT', `${API_URL}/${target.id}`, { rmaNumber: item.rmaForPrevStr });
                     }
                 }
             }
 
-            // Apply updates to the currently processing part
             if (needsUpdate) {
                 await apiCall('PUT', `${API_URL}/${currentPart.id}`, updatesToApply);
             }
@@ -381,11 +373,6 @@ export default function App() {
 
   const handleUpdateStatus = async (orderId, newStatus) => {
     await apiCall('PUT', `${API_URL}/${orderId}`, { status: newStatus });
-    fetchOrders();
-  };
-
-  const handleUpdateRMA = async (orderId, rmaNumber) => {
-    await apiCall('PUT', `${API_URL}/${orderId}`, { rmaNumber });
     fetchOrders();
   };
 
@@ -656,11 +643,18 @@ export default function App() {
                                 <RefreshCcw className="w-4 h-4" /> Warranty
                             </button>
                         )}
+                        
                         {part.status === 'RMA Ready' && (
-                            <button onClick={() => handleUpdateStatus(part.id, 'RMA Sent')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-800 hover:bg-amber-200 rounded-lg text-sm font-medium transition-colors shadow-sm">
-                                <Truck className="w-4 h-4" /> Shipped
-                            </button>
+                            <div className="flex gap-2 w-full md:w-auto">
+                                <button onClick={() => handleUpdateStatus(part.id, 'RMA Sent')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-800 hover:bg-amber-200 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                    <Truck className="w-4 h-4" /> Shipped
+                                </button>
+                                <button onClick={() => handleUpdateStatus(part.id, 'Discarded')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors shadow-sm" title="Mark as Lost/Discarded">
+                                    <XCircle className="w-4 h-4" /> Write Off
+                                </button>
+                            </div>
                         )}
+                        
                         {part.status === 'RMA Sent' && (
                             <button onClick={() => handleUpdateStatus(part.id, 'Refunded')} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-green-100 text-green-800 hover:bg-green-200 rounded-lg text-sm font-medium transition-colors shadow-sm">
                                 <DollarSign className="w-4 h-4" /> Refunded
@@ -824,14 +818,26 @@ export default function App() {
                         <input required type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
                     </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                
+                {/* NEW: SKU, Status, and RMA # clustered nicely! */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">SKU</label>
                         <input type="text" name="sku" value={formData.sku} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" />
                     </div>
                     <div>
-                        <label className="block text-xs font-medium text-slate-500 mb-1">RMA # (if applicable)</label>
-                        <input type="text" name="rmaNumber" value={formData.rmaNumber || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" placeholder="Optional" />
+                        <label className="block text-xs font-medium text-slate-500 mb-1">RMA # (Optional)</label>
+                        <input type="text" name="rmaNumber" value={formData.rmaNumber || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Status</label>
+                        <select name="status" value={formData.status} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-white">
+                            <option value="Active">On Car</option>
+                            <option value="RMA Ready">Ready to Return</option>
+                            <option value="RMA Sent">Return Shipped</option>
+                            <option value="Refunded">Completed/Refunded</option>
+                            <option value="Discarded">Lost/Discarded</option>
+                        </select>
                     </div>
                 </div>
 

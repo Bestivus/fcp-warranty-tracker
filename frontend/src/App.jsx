@@ -200,11 +200,10 @@ export default function App() {
     setImportStatus('Parsing rows...');
 
     const rows = importText.trim().split(/\r?\n/);
-    const orderNumToIdMap = {};
-    orders.forEach(o => { if (o.orderNumber) orderNumToIdMap[o.orderNumber] = o.id; });
-    const pendingLinks = [];
+    const importedDocs = []; // Array to hold new docs temporarily
 
     try {
+        // PASS 1: Create all new records
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
             if (!row.trim()) continue;
@@ -238,32 +237,72 @@ export default function App() {
               date, sku, description, vehicle, orderNumber, price, quantity: 1, status 
             });
 
-            orderNumToIdMap[orderNumber] = newDoc.id;
-            if (replacedByStr || replacesStr || rmaForPrevStr) {
-                pendingLinks.push({ docId: newDoc.id, orderNumber, replacedByStr, replacesStr, rmaForPrevStr });
-            }
+            // Save the newly created DB item along with its spreadsheet link targets
+            importedDocs.push({
+                part: newDoc,
+                replacedByStr,
+                replacesStr,
+                rmaForPrevStr
+            });
         }
 
-        setImportStatus(`Linking ${pendingLinks.length} relationships...`);
+        // Combine existing database parts with the newly imported parts to search across everything
+        const allParts = [...orders, ...importedDocs.map(d => d.part)];
+
+        // Helper function: Finds the exact line item out of a multi-part order
+        const findTargetPart = (targetOrderNum, currentPart) => {
+             const candidates = allParts.filter(p => String(p.orderNumber).trim() === String(targetOrderNum).trim());
+             if (candidates.length === 0) return null;
+             if (candidates.length === 1) return candidates[0]; // Only 1 part in order, easy match
+             
+             // If multiple parts share the order number, match by SKU or Description
+             const exactMatch = candidates.find(p => p.sku && p.sku === currentPart.sku);
+             if (exactMatch) return exactMatch;
+             
+             const descMatch = candidates.find(p => p.description && p.description === currentPart.description);
+             if (descMatch) return descMatch;
+             
+             return candidates[0]; // Fallback
+        };
+
+        setImportStatus(`Linking relationships...`);
         
-        for (const item of pendingLinks) {
+        // PASS 2: Execute Bi-Directional Linking
+        for (const item of importedDocs) {
+            const currentPart = item.part;
             const updatesToApply = {};
             let needsUpdate = false;
 
-            if (item.replacedByStr && orderNumToIdMap[item.replacedByStr]) {
-                updatesToApply.replacedByOrderId = orderNumToIdMap[item.replacedByStr];
-                needsUpdate = true;
+            // 1. If this part is eventually replaced by a newer one
+            if (item.replacedByStr) {
+                const target = findTargetPart(item.replacedByStr, currentPart);
+                if (target) {
+                    updatesToApply.replacedByOrderId = target.id;
+                    needsUpdate = true;
+                    // BI-DIRECTIONAL FIX: Tell the newer part it replaces this one
+                    await apiCall('PUT', `${API_URL}/${target.id}`, { replacesOrderId: currentPart.id });
+                }
             }
-            if (item.replacesStr && orderNumToIdMap[item.replacesStr]) {
-                updatesToApply.replacesOrderId = orderNumToIdMap[item.replacesStr];
-                needsUpdate = true;
+            
+            // 2. If this part replaces an older one
+            if (item.replacesStr) {
+                const target = findTargetPart(item.replacesStr, currentPart);
+                if (target) {
+                    updatesToApply.replacesOrderId = target.id;
+                    needsUpdate = true;
+                    // BI-DIRECTIONAL FIX: Tell the older part it was replaced by this one
+                    await apiCall('PUT', `${API_URL}/${target.id}`, { replacedByOrderId: currentPart.id });
+                    
+                    // Handle carry-over RMA
+                    if (item.rmaForPrevStr) {
+                        await apiCall('PUT', `${API_URL}/${target.id}`, { rmaNumber: item.rmaForPrevStr });
+                    }
+                }
             }
+
+            // Apply updates to the currently processing part
             if (needsUpdate) {
-                await apiCall('PUT', `${API_URL}/${item.docId}`, updatesToApply);
-            }
-            if (item.replacesStr && item.rmaForPrevStr && orderNumToIdMap[item.replacesStr]) {
-                const prevDocId = orderNumToIdMap[item.replacesStr];
-                await apiCall('PUT', `${API_URL}/${prevDocId}`, { rmaNumber: item.rmaForPrevStr });
+                await apiCall('PUT', `${API_URL}/${currentPart.id}`, updatesToApply);
             }
         }
 
@@ -431,7 +470,7 @@ export default function App() {
             groups[key] = {
                 orderNumber: key,
                 date: item.date,
-                vehicles: new Set(), // Capture all unique cars in this order
+                vehicles: new Set(),
                 items: []
             };
         }
@@ -443,7 +482,6 @@ export default function App() {
         groups[key].items.push(item);
     });
 
-    // Sort groups by date descending and convert the Set to a readable string
     return Object.values(groups).map(g => ({
         ...g,
         vehicleStr: Array.from(g.vehicles).join(', ') || 'Unknown Vehicle',
@@ -610,8 +648,8 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* Editable RMA Box if needed */}
-                        {['RMA Ready', 'RMA Sent'].includes(part.status) && (
+                        {/* Editable RMA Box - NOW VISIBLE EVEN IF REFUNDED! */}
+                        {['RMA Ready', 'RMA Sent', 'Refunded'].includes(part.status) && (
                           <div className="mt-3 ml-11 flex items-center gap-2">
                             <input 
                                 type="text" 

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Package, RefreshCcw, DollarSign, Truck, Plus, Search, 
-  Car, ArrowRight, History, Trash2, Upload, Link as LinkIcon, Pencil,
-  ChevronDown, ChevronUp
+  Car, ArrowRight, History, Trash2, Upload, Link as LinkIcon, Pencil
 } from 'lucide-react';
 
 const StatusBadge = ({ status }) => {
@@ -93,7 +92,7 @@ export default function App() {
     description: '',
     vehicle: '',
     price: '',
-    quantity: 1, // NEW FIELD
+    quantity: 1,
     status: 'Active',
     rmaNumber: '',
     replacesOrderId: '',
@@ -122,7 +121,6 @@ export default function App() {
   // --- Derived Stats ---
   const stats = useMemo(() => {
     const pendingReturns = orders.filter(o => o.status === 'RMA Ready');
-    // Calculate value considering quantity
     const pendingValue = pendingReturns.reduce((acc, curr) => acc + (parseFloat(curr.price) * (curr.quantity || 1) || 0), 0);
     const activeParts = orders.filter(o => o.status === 'Active');
     const totalRefunded = orders.filter(o => o.status === 'Refunded').reduce((acc, curr) => acc + (parseFloat(curr.price) * (curr.quantity || 1) || 0), 0);
@@ -148,7 +146,7 @@ export default function App() {
       await apiCall('POST', API_URL, {
         ...formData,
         price: parseFloat(formData.price) || 0,
-        quantity: parseInt(formData.quantity) || 1,
+        quantity: parseInt(formData.quantity, 10) || 1,
         replacesOrderId: null,
         replacedByOrderId: null,
       });
@@ -169,14 +167,13 @@ export default function App() {
         const updates = {
             ...formData,
             price: parseFloat(formData.price) || 0,
-            quantity: parseInt(formData.quantity) || 1,
+            quantity: parseInt(formData.quantity, 10) || 1,
             replacesOrderId: formData.replacesOrderId || null,
             replacedByOrderId: formData.replacedByOrderId || null
         };
         
         await apiCall('PUT', `${API_URL}/${editId}`, updates);
 
-        // Bi-directional updates
         if (originalOrder.replacesOrderId !== updates.replacesOrderId) {
             if (originalOrder.replacesOrderId) await apiCall('PUT', `${API_URL}/${originalOrder.replacesOrderId}`, { replacedByOrderId: null });
             if (updates.replacesOrderId) await apiCall('PUT', `${API_URL}/${updates.replacesOrderId}`, { replacedByOrderId: editId });
@@ -291,16 +288,14 @@ export default function App() {
     if (!selectedPart) return;
 
     try {
-      const warrantyQty = parseInt(formData.warrantyQuantity) || 1;
+      const warrantyQty = parseInt(formData.warrantyQuantity, 10) || 1;
       const currentQty = selectedPart.quantity || 1;
 
-      // Ensure they don't warranty more than they have
       if (warrantyQty > currentQty) {
           alert("You cannot warranty more items than are in the order!");
           return;
       }
 
-      // Step 1: Create the Brand New Order Item
       const newOrder = await apiCall('POST', API_URL, {
         date: formData.date,
         orderNumber: formData.orderNumber,
@@ -312,33 +307,27 @@ export default function App() {
         status: 'Active'
       });
 
-      // Step 2: Handle the Old Item (Split logic if partial RMA)
       if (warrantyQty < currentQty) {
-          // Reduce the quantity of the existing active item
           await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
               quantity: currentQty - warrantyQty 
           });
 
-          // Create a new entry specifically for the returned portion
           const splitRmaItem = await apiCall('POST', API_URL, {
               ...selectedPart,
-              id: undefined, // Let DB generate new ID
+              id: undefined,
               quantity: warrantyQty,
               status: 'RMA Ready',
               replacedByOrderId: newOrder.id
           });
 
-          // Link new active item backward to this split RMA item
           await apiCall('PUT', `${API_URL}/${newOrder.id}`, { replacesOrderId: splitRmaItem.id });
 
       } else {
-          // Full RMA - Just update the existing item
           await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
             status: 'RMA Ready', 
             replacedByOrderId: newOrder.id 
           });
           
-          // Link new active item backward to original item
           await apiCall('PUT', `${API_URL}/${newOrder.id}`, { replacesOrderId: selectedPart.id });
       }
 
@@ -381,7 +370,7 @@ export default function App() {
       rmaNumber: '',
       replacesOrderId: '',
       replacedByOrderId: '',
-      warrantyQuantity: 1 // Only used in warranty modal
+      warrantyQuantity: 1 
     });
   };
 
@@ -395,7 +384,7 @@ export default function App() {
         sku: part.sku,
         description: part.description,
         vehicle: part.vehicle,
-        warrantyQuantity: part.quantity || 1 // Default to max
+        warrantyQuantity: part.quantity || 1
     });
     setShowWarrantyModal(true);
   };
@@ -421,9 +410,8 @@ export default function App() {
     setShowEditModal(true);
   };
 
-  // --- Grouping Logic ---
+  // --- Multi-Vehicle Grouping Logic ---
   const filteredAndGroupedOrders = useMemo(() => {
-    // 1. Filter first
     const filtered = orders.filter(order => {
       const matchesSearch = 
         order.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -436,23 +424,30 @@ export default function App() {
       return matchesSearch;
     });
 
-    // 2. Group by Order Number
     const groups = {};
     filtered.forEach(item => {
         const key = item.orderNumber || 'Unknown Order';
         if (!groups[key]) {
             groups[key] = {
                 orderNumber: key,
-                date: item.date, // Take date of first item
-                vehicle: item.vehicle,
+                date: item.date,
+                vehicles: new Set(), // Capture all unique cars in this order
                 items: []
             };
         }
+        
+        if (item.vehicle) {
+            groups[key].vehicles.add(item.vehicle);
+        }
+        
         groups[key].items.push(item);
     });
 
-    // Sort groups by date descending
-    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+    // Sort groups by date descending and convert the Set to a readable string
+    return Object.values(groups).map(g => ({
+        ...g,
+        vehicleStr: Array.from(g.vehicles).join(', ') || 'Unknown Vehicle',
+    })).sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [orders, searchTerm, view]);
 
   if (loading) return <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-400">Loading your garage...</div>;
@@ -556,7 +551,10 @@ export default function App() {
                      <div className="h-8 w-px bg-slate-300 hidden sm:block"></div>
                      <div className="text-sm text-slate-500 flex flex-col">
                         <span>{group.date}</span>
-                        <div className="flex items-center gap-1"><Car className="w-3 h-3"/> {group.vehicle || 'Mixed Vehicles'}</div>
+                        <div className="flex items-center gap-1">
+                            <Car className="w-3 h-3 text-slate-400"/> 
+                            <span className="truncate max-w-[200px]" title={group.vehicleStr}>{group.vehicleStr}</span>
+                        </div>
                      </div>
                   </div>
                   <div className="text-right">
@@ -580,7 +578,10 @@ export default function App() {
                            </div>
                            <div>
                               <h3 className="font-semibold text-slate-800 text-base">{part.description}</h3>
-                              <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-slate-500">
+                              <div className="flex flex-wrap items-center gap-3 mt-1.5 text-sm text-slate-500">
+                                <span className="flex items-center gap-1 font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md text-xs border border-slate-200 shadow-sm">
+                                    <Car className="w-3 h-3 text-slate-400" /> {part.vehicle || 'Unknown'}
+                                </span>
                                 <span className="font-mono bg-white border border-slate-200 px-1.5 rounded text-xs">SKU: {part.sku}</span>
                                 <span className="flex items-center"><DollarSign className="w-3 h-3 text-slate-400" />{parseFloat(part.price).toFixed(2)} ea</span>
                                 <StatusBadge status={part.status} />

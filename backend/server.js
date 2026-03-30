@@ -9,13 +9,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Ensure data directory exists (for Docker persistence)
 const dataDir = process.env.NODE_ENV === 'production' ? '/app/data' : path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Initialize SQLite Database
 const dbPath = path.join(dataDir, 'fcp_orders.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) console.error('Error opening database', err);
@@ -37,14 +35,17 @@ db.serialize(() => {
             createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             replacesOrderId TEXT,
             replacedByOrderId TEXT,
-            rmaNumber TEXT
+            rmaNumber TEXT,
+            quantity INTEGER DEFAULT 1
         )
     `);
+
+    // Upgrade existing database safely if it was created before the quantity feature
+    db.run(`ALTER TABLE orders ADD COLUMN quantity INTEGER DEFAULT 1`, (err) => {
+        // We expect this to fail with "duplicate column name" if it already exists, which is totally fine.
+    });
 });
 
-// --- API ROUTES ---
-
-// GET all orders
 app.get('/api/orders', (req, res) => {
     db.all("SELECT * FROM orders ORDER BY date DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -52,32 +53,29 @@ app.get('/api/orders', (req, res) => {
     });
 });
 
-// POST new order
 app.post('/api/orders', (req, res) => {
-    const { date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber } = req.body;
+    const { date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber, quantity } = req.body;
     const id = uuidv4();
     
     const stmt = db.prepare(`
-        INSERT INTO orders (id, date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO orders (id, date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber, quantity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
-    stmt.run([id, date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber], function(err) {
+    stmt.run([id, date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber, quantity || 1], function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ id, date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber });
+        res.json({ id, date, orderNumber, sku, description, vehicle, price, status, replacesOrderId, replacedByOrderId, rmaNumber, quantity: quantity || 1 });
     });
     stmt.finalize();
 });
 
-// PUT (update) order
 app.put('/api/orders/:id', (req, res) => {
     const { id } = req.params;
-    
-    // Dynamically build the update query based on what was sent
     const updates = [];
     const values = [];
     
-    const fields = ['date', 'orderNumber', 'sku', 'description', 'vehicle', 'price', 'status', 'replacesOrderId', 'replacedByOrderId', 'rmaNumber'];
+    // THIS LINE is what fixes your bug! We told the PUT command that 'quantity' is allowed to be updated.
+    const fields = ['date', 'orderNumber', 'sku', 'description', 'vehicle', 'price', 'status', 'replacesOrderId', 'replacedByOrderId', 'rmaNumber', 'quantity'];
     fields.forEach(field => {
         if (req.body[field] !== undefined) {
             updates.push(`${field} = ?`);
@@ -86,8 +84,7 @@ app.put('/api/orders/:id', (req, res) => {
     });
     
     if (updates.length === 0) return res.status(400).json({ error: "No fields to update" });
-    
-    values.push(id); // for the WHERE clause
+    values.push(id);
     
     db.run(`UPDATE orders SET ${updates.join(', ')} WHERE id = ?`, values, function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -95,7 +92,6 @@ app.put('/api/orders/:id', (req, res) => {
     });
 });
 
-// DELETE order
 app.delete('/api/orders/:id', (req, res) => {
     db.run("DELETE FROM orders WHERE id = ?", req.params.id, function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -103,7 +99,6 @@ app.delete('/api/orders/:id', (req, res) => {
     });
 });
 
-// Serve the React frontend in production
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

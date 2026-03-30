@@ -2,9 +2,11 @@
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /app/frontend
-# We will create this frontend folder structure shortly
+# Copy package files and install dependencies
 COPY frontend/package*.json ./
 RUN npm install
+
+# Copy source code and build
 COPY frontend/ .
 RUN npm run build
 
@@ -20,7 +22,10 @@ COPY backend/ .
 # Copy the built React app from Stage 1 into the backend's public folder
 COPY --from=frontend-build /app/frontend/dist ./public
 
-# Create a directory for our persistent database
+# IMPORTANT: Tell the server it is in production mode!
+ENV NODE_ENV=production
+
+# Create a clean directory for our persistent database
 RUN mkdir -p /app/data
 
 EXPOSE 3000

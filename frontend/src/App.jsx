@@ -647,19 +647,6 @@ export default function App() {
                             )}
                           </div>
                         )}
-
-                        {/* Editable RMA Box - NOW VISIBLE EVEN IF REFUNDED! */}
-                        {['RMA Ready', 'RMA Sent', 'Refunded'].includes(part.status) && (
-                          <div className="mt-3 ml-11 flex items-center gap-2">
-                            <input 
-                                type="text" 
-                                placeholder="Enter RMA #" 
-                                value={part.rmaNumber || ''}
-                                onChange={(e) => handleUpdateRMA(part.id, e.target.value)}
-                                className="text-xs border border-amber-300 bg-amber-50 rounded px-2 py-1.5 w-40 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 shadow-sm"
-                            />
-                          </div>
-                        )}
                       </div>
 
                       {/* Action Buttons */}
@@ -837,9 +824,15 @@ export default function App() {
                         <input required type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
                     </div>
                 </div>
-                <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">SKU</label>
-                    <input type="text" name="sku" value={formData.sku} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" />
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">SKU</label>
+                        <input type="text" name="sku" value={formData.sku} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">RMA # (if applicable)</label>
+                        <input type="text" name="rmaNumber" value={formData.rmaNumber || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono" placeholder="Optional" />
+                    </div>
                 </div>
 
                 <div className="border-t border-slate-100 pt-4 mt-4">

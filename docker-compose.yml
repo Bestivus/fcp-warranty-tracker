@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  fcp-tracker:
+    build: .
+    container_name: fcp-tracker
+    restart: unless-stopped
+    volumes:
+      # This is CRITICAL. It maps the internal SQLite database file 
+      # to a folder on your actual server so you don't lose your 
+      # parts list if the container restarts.
+      - ./app-data:/app/data
+    networks:
+      - proxy # Assuming your Traefik network is named 'proxy'
+    labels:
+      - "traefik.enable=true"
+      # Change 'fcp.local' to whatever local domain/IP scheme you use for Traefik
+      - "traefik.http.routers.fcptracker.rule=Host(`fcp.local`)"
+      - "traefik.http.routers.fcptracker.entrypoints=web"
+      # If you use HTTPS/TLS on your local Traefik, uncomment below:
+      # - "traefik.http.routers.fcptracker.tls=true"
+      # - "traefik.http.routers.fcptracker.entrypoints=websecure"
+      - "traefik.http.services.fcptracker.loadbalancer.server.port=3000"
+
+networks:
+  proxy:
+    external: true

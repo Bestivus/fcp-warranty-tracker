@@ -98,7 +98,9 @@ export default function App() {
     status: 'Active',
     rmaNumber: '',
     replacesOrderId: '',
-    replacedByOrderId: ''
+    replacedByOrderId: '',
+    warrantyQuantity: 1,
+    replacementType: 'warranty' // Tracks the replacement method
   });
   
   const [selectedPart, setSelectedPart] = useState(null);
@@ -327,6 +329,7 @@ export default function App() {
           return;
       }
 
+      // Step 1: Create the Brand New Order Item
       const newOrder = await apiCall('POST', API_URL, {
         date: formData.date,
         orderNumber: formData.orderNumber,
@@ -338,27 +341,35 @@ export default function App() {
         status: 'Active'
       });
 
+      // Determine what happens to the old item based on toggle
+      const oldItemStatus = formData.replacementType === 'writeoff' ? 'Discarded' : 'RMA Ready';
+
       if (warrantyQty < currentQty) {
+          // Reduce the quantity of the existing active item
           await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
               quantity: currentQty - warrantyQty 
           });
 
+          // Create a new entry specifically for the returned/discarded portion
           const splitRmaItem = await apiCall('POST', API_URL, {
               ...selectedPart,
               id: undefined,
               quantity: warrantyQty,
-              status: 'RMA Ready',
+              status: oldItemStatus,
               replacedByOrderId: newOrder.id
           });
 
+          // Link new active item backward to this split item
           await apiCall('PUT', `${API_URL}/${newOrder.id}`, { replacesOrderId: splitRmaItem.id });
 
       } else {
+          // Full Replacement - Just update the existing item's status
           await apiCall('PUT', `${API_URL}/${selectedPart.id}`, { 
-            status: 'RMA Ready', 
+            status: oldItemStatus, 
             replacedByOrderId: newOrder.id 
           });
           
+          // Link new active item backward to original item
           await apiCall('PUT', `${API_URL}/${newOrder.id}`, { replacesOrderId: selectedPart.id });
       }
 
@@ -396,7 +407,8 @@ export default function App() {
       rmaNumber: '',
       replacesOrderId: '',
       replacedByOrderId: '',
-      warrantyQuantity: 1 
+      warrantyQuantity: 1,
+      replacementType: 'warranty'
     });
   };
 
@@ -410,7 +422,8 @@ export default function App() {
         sku: part.sku,
         description: part.description,
         vehicle: part.vehicle,
-        warrantyQuantity: part.quantity || 1
+        warrantyQuantity: part.quantity || 1,
+        replacementType: 'warranty'
     });
     setShowWarrantyModal(true);
   };
@@ -640,7 +653,7 @@ export default function App() {
                       <div className="flex items-center gap-2 mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 w-full md:w-auto">
                         {part.status === 'Active' && (
                             <button onClick={() => openWarrantyModal(part)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors shadow-sm">
-                                <RefreshCcw className="w-4 h-4" /> Warranty
+                                <RefreshCcw className="w-4 h-4" /> Replace Part
                             </button>
                         )}
                         
@@ -819,7 +832,6 @@ export default function App() {
                     </div>
                 </div>
                 
-                {/* NEW: SKU, Status, and RMA # clustered nicely! */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">SKU</label>
@@ -876,14 +888,14 @@ export default function App() {
         </div>
       )}
 
-      {/* Warranty Replace Modal - WITH PARTIAL SPLIT LOGIC */}
+      {/* Warranty Replace Modal - WITH PARTIAL SPLIT LOGIC & WRITEOFF TOGGLE */}
       {showWarrantyModal && selectedPart && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border-2 border-blue-100">
             <div className="p-4 border-b border-blue-100 flex justify-between items-center bg-blue-50">
               <div className="flex items-center gap-2 text-blue-800">
                 <RefreshCcw className="w-5 h-5" />
-                <h3 className="font-semibold">Warranty Replacement</h3>
+                <h3 className="font-semibold">Replace Part</h3>
               </div>
               <button onClick={() => setShowWarrantyModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
@@ -898,14 +910,35 @@ export default function App() {
                 <p className="text-xs text-slate-400 font-mono mt-1">Orig Order: #{selectedPart.orderNumber}</p>
               </div>
 
-              <div className="text-sm text-slate-600">
-                 Enter the details of the <strong>NEW</strong> order you just placed. 
+              {/* NEW TOGGLE SWITCH */}
+              <div className="flex gap-2">
+                  <button 
+                      type="button"
+                      onClick={() => setFormData({...formData, replacementType: 'warranty'})}
+                      className={`flex-1 py-2 px-3 rounded-lg border text-sm font-medium flex items-center justify-center gap-2 transition-colors ${formData.replacementType === 'warranty' ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                  >
+                      <RefreshCcw className="w-4 h-4" /> Warranty Return
+                  </button>
+                  <button 
+                      type="button"
+                      onClick={() => setFormData({...formData, replacementType: 'writeoff'})}
+                      className={`flex-1 py-2 px-3 rounded-lg border text-sm font-medium flex items-center justify-center gap-2 transition-colors ${formData.replacementType === 'writeoff' ? 'bg-red-50 border-red-600 text-red-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                  >
+                      <XCircle className="w-4 h-4" /> Write Off (Lost)
+                  </button>
+              </div>
+
+              <div className="text-sm text-slate-600 border-t border-slate-100 pt-4">
+                 Enter the details of the <strong>NEW</strong> replacement order you just placed. 
+                 <span className="block text-xs mt-1.5 text-slate-500">
+                    The old part will automatically be marked as {formData.replacementType === 'warranty' ? <strong className="text-amber-600">Ready to Return</strong> : <strong className="text-red-600">Lost/Discarded</strong>}.
+                 </span>
               </div>
 
               <form onSubmit={handleWarrantySubmit} className="space-y-4 pt-2">
                  
-                 <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-xl mb-4">
-                    <label className="block text-sm font-bold text-blue-800 mb-2">How many are you returning?</label>
+                 <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl mb-4">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">How many are you replacing?</label>
                     <input 
                         required 
                         type="number" 
@@ -914,7 +947,7 @@ export default function App() {
                         name="warrantyQuantity" 
                         value={formData.warrantyQuantity} 
                         onChange={handleInputChange} 
-                        className="w-full p-2 border-2 border-blue-300 bg-white rounded-lg text-lg font-bold text-center text-blue-700" 
+                        className="w-full p-2 border-2 border-slate-300 bg-white rounded-lg text-lg font-bold text-center text-slate-800 focus:border-blue-500 focus:outline-none" 
                     />
                     {(formData.warrantyQuantity < (selectedPart.quantity || 1)) && (
                         <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">

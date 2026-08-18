@@ -49,7 +49,7 @@ const STAGE_TABS = [
   { id: 'refunded', label: 'Refunded', group: 'stage' },
 ];
 const BROWSE_TABS = [
-  { id: 'all', label: 'All Parts', group: 'browse' },
+  { id: 'all', label: 'All Orders', group: 'browse' },
   { id: 'allRmas', label: 'All RMAs', group: 'browse' },
 ];
 // Active-tab color per stage, reusing the same palette as StatusBadge so the

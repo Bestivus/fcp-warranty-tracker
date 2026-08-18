@@ -39,17 +39,35 @@ const StatusBadge = ({ order }) => {
   );
 };
 
-const TABS = [
-  { id: 'onCar', label: 'On Car' },
-  { id: 'inGarage', label: 'In Garage' },
-  { id: 'filedShipped', label: 'Filed & Shipped' },
-  { id: 'refunded', label: 'Refunded' },
-  { id: 'all', label: 'All Parts' },
+// Two independent tab clusters sharing one active selection: "stage" tabs
+// answer "what shape is this part in right now", "browse" tabs answer
+// "show me everything, sliced a different way".
+const STAGE_TABS = [
+  { id: 'onCar', label: 'On Car', group: 'stage' },
+  { id: 'inGarage', label: 'In Garage', group: 'stage' },
+  { id: 'filedShipped', label: 'Filed & Shipped', group: 'stage' },
+  { id: 'refunded', label: 'Refunded', group: 'stage' },
 ];
+const BROWSE_TABS = [
+  { id: 'all', label: 'All Parts', group: 'browse' },
+  { id: 'allRmas', label: 'All RMAs', group: 'browse' },
+];
+// Active-tab color per stage, reusing the same palette as StatusBadge so the
+// tab itself previews what you're about to see.
+const STAGE_TAB_ACTIVE_STYLE = {
+  onCar: 'bg-green-100 text-green-800 border border-green-200 shadow-sm',
+  inGarage: 'bg-indigo-100 text-indigo-800 border border-indigo-200 shadow-sm',
+  filedShipped: 'bg-amber-100 text-amber-800 border border-amber-200 shadow-sm',
+  refunded: 'bg-slate-200 text-slate-800 border border-slate-300 shadow-sm',
+};
+const BROWSE_TAB_ACTIVE_STYLE = 'bg-blue-100 text-blue-800 border border-blue-200 shadow-sm';
+const TAB_SAME_GROUP_STYLE = 'border border-transparent text-slate-500 hover:text-slate-700';
+const TAB_OTHER_GROUP_STYLE = 'border border-transparent text-slate-300 hover:text-slate-400';
 
 const matchesTab = (order, tabId) => {
   const key = statusKey(order);
   if (tabId === 'all') return true;
+  if (tabId === 'allRmas') return !!order.rmaNumber;
   if (tabId === 'onCar') return key === 'onCar';
   if (tabId === 'inGarage') return key === 'inGarage';
   if (tabId === 'filedShipped') return key === 'filed' || key === 'shipped';
@@ -458,7 +476,15 @@ export default function App() {
   };
 
   // --- Grouping: by order number normally, by RMA number on Filed & Shipped ---
-  const groupByRma = activeTab === 'filedShipped';
+  const groupByRma = activeTab === 'filedShipped' || activeTab === 'allRmas';
+
+  const activeTabGroup = STAGE_TABS.some(t => t.id === activeTab) ? 'stage' : 'browse';
+  const tabButtonClass = (tab) => {
+    if (tab.id === activeTab) {
+      return tab.group === 'stage' ? STAGE_TAB_ACTIVE_STYLE[tab.id] : BROWSE_TAB_ACTIVE_STYLE;
+    }
+    return tab.group === activeTabGroup ? TAB_SAME_GROUP_STYLE : TAB_OTHER_GROUP_STYLE;
+  };
 
   const filteredAndGroupedOrders = useMemo(() => {
     const search = searchTerm.trim().toLowerCase();
@@ -559,19 +585,32 @@ export default function App() {
 
         {/* Controls */}
         <div className="flex flex-col md:flex-row justify-between gap-4 items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex bg-slate-100 p-1 rounded-lg w-full md:w-auto overflow-x-auto">
-            {TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                {tab.label}
-                {tab.id === 'inGarage' && stats.needsFilingCount > 0 && (
-                  <span className="ml-2 bg-amber-500 text-white text-[10px] px-1.5 rounded-full">{stats.needsFilingCount}</span>
-                )}
-              </button>
-            ))}
+          <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+            <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto overflow-x-auto">
+              {STAGE_TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${tabButtonClass(tab)}`}
+                >
+                  {tab.label}
+                  {tab.id === 'inGarage' && stats.needsFilingCount > 0 && (
+                    <span className="ml-2 bg-amber-500 text-white text-[10px] px-1.5 rounded-full">{stats.needsFilingCount}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto overflow-x-auto">
+              {BROWSE_TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${tabButtonClass(tab)}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex w-full md:w-auto gap-2">

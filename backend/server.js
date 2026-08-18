@@ -36,14 +36,18 @@ db.serialize(() => {
             replacesOrderId TEXT,
             replacedByOrderId TEXT,
             rmaNumber TEXT,
-            quantity INTEGER DEFAULT 1
+            quantity INTEGER DEFAULT 1,
+            removedDate TEXT,
+            filedDate TEXT
         )
     `);
 
-    // Upgrade existing database safely if it was created before the quantity feature
-    db.run(`ALTER TABLE orders ADD COLUMN quantity INTEGER DEFAULT 1`, (err) => {
-        // We expect this to fail with "duplicate column name" if it already exists, which is totally fine.
-    });
+    // Upgrade existing databases safely if they predate a given column.
+    // Each of these is expected to fail with "duplicate column name" once
+    // it's already been applied, which is totally fine.
+    db.run(`ALTER TABLE orders ADD COLUMN quantity INTEGER DEFAULT 1`, () => {});
+    db.run(`ALTER TABLE orders ADD COLUMN removedDate TEXT`, () => {});
+    db.run(`ALTER TABLE orders ADD COLUMN filedDate TEXT`, () => {});
 });
 
 app.get('/api/orders', (req, res) => {
@@ -75,7 +79,7 @@ app.put('/api/orders/:id', (req, res) => {
     const values = [];
     
     // THIS LINE is what fixes your bug! We told the PUT command that 'quantity' is allowed to be updated.
-    const fields = ['date', 'orderNumber', 'sku', 'description', 'vehicle', 'price', 'status', 'replacesOrderId', 'replacedByOrderId', 'rmaNumber', 'quantity'];
+    const fields = ['date', 'orderNumber', 'sku', 'description', 'vehicle', 'price', 'status', 'replacesOrderId', 'replacedByOrderId', 'rmaNumber', 'quantity', 'removedDate', 'filedDate'];
     fields.forEach(field => {
         if (req.body[field] !== undefined) {
             updates.push(`${field} = ?`);

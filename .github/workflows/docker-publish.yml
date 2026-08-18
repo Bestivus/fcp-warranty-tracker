@@ -1,9 +1,11 @@
 name: Build and Publish Docker Image
 
-# This tells GitHub to run this robot every time you push to the 'main' branch
+# Pushes to 'main' publish the production ':latest' image.
+# Pushes to 'beta' publish a ':beta' image you can test with before
+# it ever touches main.
 on:
   push:
-    branches: ['main']
+    branches: ['main', 'beta']
 
 env:
   REGISTRY: ghcr.io
@@ -39,8 +41,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
-            type=sha
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5

@@ -1,2 +1,4 @@
 docker-compose-internal.yml
 app-data/
+backend/node_modules/
+backend/data/

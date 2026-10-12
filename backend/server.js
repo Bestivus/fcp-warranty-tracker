@@ -38,7 +38,8 @@ db.serialize(() => {
             rmaNumber TEXT,
             quantity INTEGER DEFAULT 1,
             removedDate TEXT,
-            filedDate TEXT
+            filedDate TEXT,
+            installedDate TEXT
         )
     `);
 
@@ -48,6 +49,7 @@ db.serialize(() => {
     db.run(`ALTER TABLE orders ADD COLUMN quantity INTEGER DEFAULT 1`, () => {});
     db.run(`ALTER TABLE orders ADD COLUMN removedDate TEXT`, () => {});
     db.run(`ALTER TABLE orders ADD COLUMN filedDate TEXT`, () => {});
+    db.run(`ALTER TABLE orders ADD COLUMN installedDate TEXT`, () => {});
 });
 
 app.get('/api/orders', (req, res) => {
@@ -79,7 +81,7 @@ app.put('/api/orders/:id', (req, res) => {
     const values = [];
     
     // THIS LINE is what fixes your bug! We told the PUT command that 'quantity' is allowed to be updated.
-    const fields = ['date', 'orderNumber', 'sku', 'description', 'vehicle', 'price', 'status', 'replacesOrderId', 'replacedByOrderId', 'rmaNumber', 'quantity', 'removedDate', 'filedDate'];
+    const fields = ['date', 'orderNumber', 'sku', 'description', 'vehicle', 'price', 'status', 'replacesOrderId', 'replacedByOrderId', 'rmaNumber', 'quantity', 'removedDate', 'filedDate', 'installedDate'];
     fields.forEach(field => {
         if (req.body[field] !== undefined) {
             updates.push(`${field} = ?`);

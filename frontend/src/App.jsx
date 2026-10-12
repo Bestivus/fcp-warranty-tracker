@@ -167,10 +167,11 @@ export default function App() {
     vehicle: '',
     price: '',
     quantity: 1,
-    status: 'Active',
+    status: 'RMA Ready',
     rmaNumber: '',
     removedDate: '',
     filedDate: '',
+    installedDate: '',
   });
 
   const fetchOrders = async () => {
@@ -210,11 +211,21 @@ export default function App() {
     setActionTarget({ id, type: 'remove' });
     setRemoveDateDraft(todayStr());
   };
+  const openAddToCar = (id) => {
+    setActionTarget({ id, type: 'addToCar' });
+    setRemoveDateDraft(todayStr());
+  };
   const openWriteOff = (id) => setActionTarget({ id, type: 'writeoff' });
   const closeAction = () => setActionTarget(null);
 
   const confirmRemove = async (id) => {
     await apiCall('PUT', `${API_URL}/${id}`, { status: 'RMA Ready', removedDate: removeDateDraft || todayStr() });
+    setActionTarget(null);
+    fetchOrders();
+  };
+
+  const confirmAddToCar = async (id) => {
+    await apiCall('PUT', `${API_URL}/${id}`, { status: 'Active', removedDate: null, installedDate: removeDateDraft || todayStr() });
     setActionTarget(null);
     fetchOrders();
   };
@@ -307,10 +318,11 @@ export default function App() {
       vehicle: '',
       price: '',
       quantity: 1,
-      status: 'Active',
+      status: 'RMA Ready',
       rmaNumber: '',
       removedDate: '',
       filedDate: '',
+      installedDate: '',
     });
   };
 
@@ -352,6 +364,7 @@ export default function App() {
       rmaNumber: order.rmaNumber || '',
       removedDate: order.removedDate || '',
       filedDate: order.filedDate || '',
+      installedDate: order.installedDate || '',
     });
     setShowEditModal(true);
   };
@@ -367,6 +380,7 @@ export default function App() {
         rmaNumber: formData.rmaNumber || null,
         removedDate: formData.removedDate || null,
         filedDate: formData.filedDate || null,
+        installedDate: formData.installedDate || null,
       });
       setShowEditModal(false);
       setEditId(null);
@@ -573,10 +587,6 @@ export default function App() {
               <span className="text-slate-400 text-xs uppercase font-bold">Lifetime Refunded</span>
               <span className="text-lg font-mono text-green-400">${stats.totalRefunded.toFixed(2)}</span>
             </div>
-            <div className="bg-slate-800 px-4 py-2 rounded-lg border border-slate-700 flex flex-col items-center min-w-[100px]">
-              <span className="text-slate-400 text-xs uppercase font-bold">Needs Filing</span>
-              <span className="text-lg font-mono text-amber-400">{stats.needsFilingCount}</span>
-            </div>
           </div>
         </div>
       </div>
@@ -748,6 +758,11 @@ export default function App() {
                                 <ArrowRight className="w-4 h-4" /> Remove from Car
                               </button>
                             )}
+                            {key === 'inGarage' && (
+                              <button onClick={() => openAddToCar(part.id)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-white border border-green-200 text-green-700 hover:bg-green-50 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                <ArrowRight className="w-4 h-4 rotate-180" /> Add to Car
+                              </button>
+                            )}
                             {(key === 'onCar' || key === 'inGarage') && (
                               <button onClick={() => openWriteOff(part.id)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors shadow-sm" title="Mark as Lost/Discarded">
                                 <XCircle className="w-4 h-4" /> Write Off
@@ -768,6 +783,14 @@ export default function App() {
                               <span className="text-sm text-slate-600 font-medium">Removed from car on</span>
                               <input type="date" value={removeDateDraft} onChange={(e) => setRemoveDateDraft(e.target.value)} className="border border-slate-300 rounded-md px-2 py-1.5 text-sm" />
                               <button onClick={() => confirmRemove(part.id)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Confirm</button>
+                              <button onClick={closeAction} className="px-3 py-1.5 text-slate-600 hover:text-slate-800 font-medium text-sm">Cancel</button>
+                            </div>
+                          )}
+                          {actionTarget?.id === part.id && actionTarget.type === 'addToCar' && (
+                            <div className="w-full mt-3 bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                              <span className="text-sm text-green-700 font-medium">Installed on car on</span>
+                              <input type="date" value={removeDateDraft} onChange={(e) => setRemoveDateDraft(e.target.value)} className="border border-slate-300 rounded-md px-2 py-1.5 text-sm" />
+                              <button onClick={() => confirmAddToCar(part.id)} className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium">Confirm</button>
                               <button onClick={closeAction} className="px-3 py-1.5 text-slate-600 hover:text-slate-800 font-medium text-sm">Cancel</button>
                             </div>
                           )}
@@ -1072,7 +1095,11 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-4">
+                <div className="grid grid-cols-3 gap-4 border-t border-slate-100 pt-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Installed On Car (Optional)</label>
+                    <input type="date" name="installedDate" value={formData.installedDate || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />
+                  </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Removed From Car (Optional)</label>
                     <input type="date" name="removedDate" value={formData.removedDate || ''} onChange={handleInputChange} className="w-full p-2 border border-slate-200 rounded-lg text-sm" />

@@ -735,9 +735,9 @@ export default function App() {
                                   <span className="font-mono bg-white border border-slate-200 px-1.5 rounded text-xs">SKU: {part.sku}</span>
                                   <span className="flex items-center"><DollarSign className="w-3 h-3 text-slate-400" />{parseFloat(part.price).toFixed(2)} ea</span>
                                   <StatusBadge order={part} />
-                                  {key === 'inGarage' && (
+                                  {key === 'inGarage' && part.removedDate && (
                                     <span className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md">
-                                      {part.removedDate ? `In garage since ${fmtDate(part.removedDate)}` : 'In garage'}
+                                      {`In garage since ${fmtDate(part.removedDate)}`}
                                     </span>
                                   )}
                                   {groupByRma && (
